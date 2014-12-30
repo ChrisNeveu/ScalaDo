@@ -33,40 +33,76 @@ package object scalado {
       def mappify(c : Context)(trees : List[c.Tree]) : List[c.Tree] = {
          import c.universe._
 
-         splitWhen(trees)(isRun(c)) match {
-            case (ts, Nil) ⇒ ts
-            case (ts, mapped) ⇒
-               val m = ts.last
-               ts.init ++ List(mkMap(c)(m, Block(mapped.init, mapped.last)))
-         }
+         // The boolean indicates whether the mappified list contains
+         // a monadic value.
+         def _mappify(trees : List[c.Tree]) : (List[c.Tree], Boolean) =
+            splitWhen(trees)(isRun(c)) match {
+               case (ts, Nil) ⇒ (ts, false)
+               case (ts, mapped) ⇒
+                  val m = ts.last
+                  val (_mapped, flatMap) = _mappify(mapped)
+                  val newLastExpr =
+                     if (flatMap)
+                        mkFlatMap(c)(m, Block(_mapped.init, _mapped.last))
+                     else
+                        mkMap(c)(m, Block(_mapped.init, _mapped.last))
+                  (ts.init ++ List(newLastExpr), true)
+            }
+         _mappify(trees)._1
+      }
+
+      def valDef2Function(c : Context)(vd : c.universe.ValDef) : c.universe.Function = {
+         import c.universe._
+
+         val ValDef(mods, name, tt, tree) = vd
+         Function(List(ValDef(mods, name, tt, EmptyTree)), tree)
       }
 
       def mkMap(c : Context)(tree : c.Tree, other : c.Tree) : c.Tree = {
          import c.universe._
-         Apply(
-            Select(extractRun(c)(tree).get, TermName("map")),
-            List(Function(List(ValDef(Modifiers(Flag.PARAM), TermName("x$1"), TypeTree(), EmptyTree)), other))
-         )
+         tree match {
+            case f @ Function(_, _) ⇒ Apply(
+               Select(extractRun(c)(tree).get, TermName("map")),
+               List(other))
+            case _ ⇒ Apply(
+               Select(extractRun(c)(tree).get, TermName("map")),
+               List(Function(List(ValDef(Modifiers(Flag.PARAM), TermName("x$1"), TypeTree(), EmptyTree)), other)))
+         }
       }
 
       def mkFlatMap(c : Context)(tree : c.Tree, other : c.Tree) : c.Tree = {
          import c.universe._
-         Apply(Select(tree, TermName("flatMap")), List(other))
+         Apply(
+            Select(extractRun(c)(tree).get, TermName("flatMap")),
+            List(Function(List(ValDef(Modifiers(Flag.PARAM), TermName("x$1"), TypeTree(), EmptyTree)), other))
+         )
       }
 
-      def isRun(c : Context)(tree : c.Tree) : Boolean = {
+      def isRun(c : Context)(tree : c.Tree) : Boolean =
+         extractRun(c)(tree).isDefined
+
+      def hasRun(c : Context)(tree : c.Tree) : Boolean = {
          import c.universe._
-         println("Tree--------------\n" + showRaw(tree) + "\n------------------")
-         val foo = extractRun(c)(tree).isDefined
-         println("isRun: " + foo + "\n------------------")
-         foo
+
+         tree match {
+            case t if extractRun(c)(t).isDefined ⇒ true
+            case ValDef(_, _, _, t)              ⇒ hasRun(c)(t)
+            case Block(ts, t)                    ⇒ hasRun(c)(t) || ts.map(hasRun(c)).foldRight(false)((a, b) ⇒ a || b)
+            case _                               ⇒ false
+         }
       }
 
       def extractRun(c : Context)(tree : c.Tree) : Option[c.Tree] = {
          import c.universe._
          tree match {
             case Apply(Ident(TermName("run")), List(t)) ⇒ Some(t)
-            case Apply(TypeApply(Select(Select(Ident(TermName("scalado")), TermName("package")), TermName("run")), List(TypeTree(), TypeTree())), List(t)) ⇒ Some(t)
+            case Apply(
+               TypeApply(
+                  Select(
+                     Select(Ident(TermName("scalado")), TermName("package")),
+                     TermName("run")),
+                  List(TypeTree(), TypeTree())),
+               List(t)) ⇒ Some(t)
             case _ ⇒ None
          }
       }

@@ -12,6 +12,7 @@ object Example extends App {
 		bar + baz
 
 		run(Option(5))
+		run(Option(6))
 
 		foo + baz
 	}
