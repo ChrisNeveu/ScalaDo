@@ -16,4 +16,6 @@ object Example extends App {
 
 		foo + baz
 	}
+
+	//effect({(x : Int) => (x, 5)})
 }

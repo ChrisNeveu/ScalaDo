@@ -9,12 +9,15 @@ private abstract class EffectImplementation {
 
    def effect[M[_], A](a : Expr[A]) : Expr[M[A]] = {
       println(showRaw(a.tree))
+      /*
       val newTree = a.tree match {
          case Block(lines, last) ⇒
             val newLines = mappify(lines ++ List(last))
             c.Expr[M[A]](Block(newLines.init, newLines.last))
          case t ⇒ c.Expr[M[A]](t)
       }
+      */
+      val newTree = c.Expr[M[A]](rewrite(a.tree))
       println(".............\n" + newTree + "\n.............")
       newTree
    }
@@ -51,7 +54,7 @@ private abstract class EffectImplementation {
    def uniqueName : String = ???
 
    // Rewrites a tree which contains a run statement to a map on the run value.
-   def rewrite(tree : Tree, rest : List[Tree]) : Tree = {
+   def rewrite(tree : Tree) : Tree = {
 
       def _rewrite(tree : Tree) : (List[(String, Tree)], Tree) = tree match {
          case Apply(
@@ -75,7 +78,59 @@ private abstract class EffectImplementation {
          case _ ⇒ abort(NoPosition, "Unexpected run found.")
       }
 
-      ???
+      val (effects, newTree) = _rewrite(tree)
+
+      effects match {
+         case e :: es ⇒
+            val effectTree = effects.foldLeft(e._2) {
+               case (acc, (_, t)) ⇒ Apply(
+                  Select(acc, TermName("flatMap")),
+                  List(Function(
+                     List(
+                        ValDef(
+                           Modifiers(Flag.PARAM),
+                           TermName("x"),
+                           TypeTree(),
+                           EmptyTree
+                        )
+                     ),
+                     Apply(
+                        Select(
+                           Select(
+                              Select(Ident(TermName("scala")), TermName("package")),
+                              TermName("Tuple2")
+                           ),
+                           TermName("apply")
+                        ),
+                        List(Ident(TermName("x")), t))
+                  )
+                  ))
+            }
+            var i = 0
+            val nameDefs = effects.map {
+               case (name, _) ⇒
+                  i += 1
+                  ValDef(
+                     Modifiers(),
+                     TermName(name),
+                     TypeTree(),
+                     Select(Ident(TermName("x")), TermName("_" + i)))
+            }
+
+            Apply(
+               Select(effectTree, TermName("map")),
+               List(Function(
+                  List(ValDef(
+                     Modifiers(Flag.PARAM),
+                     TermName("x"),
+                     TypeTree(),
+                     EmptyTree)),
+                  Block(
+                     nameDefs,
+                     newTree)))
+            )
+         case Nil ⇒ tree
+      }
    }
 
    def valDef2Function(vd : ValDef) : Function = {
@@ -84,7 +139,7 @@ private abstract class EffectImplementation {
       Function(List(ValDef(mods, name, tt, EmptyTree)), tree)
    }
 
-   def mkMap(tree : Tree, other : Tree) : Tree = {
+   def mkMap(tree : Tree, other : Tree) : Tree =
       tree match {
          case f @ Function(_, _) ⇒ Apply(
             Select(extractRun(tree).get, TermName("map")),
@@ -93,29 +148,25 @@ private abstract class EffectImplementation {
             Select(extractRun(tree).get, TermName("map")),
             List(Function(List(ValDef(Modifiers(Flag.PARAM), TermName("x$1"), TypeTree(), EmptyTree)), other)))
       }
-   }
 
-   def mkFlatMap(tree : Tree, other : Tree) : Tree = {
+   def mkFlatMap(tree : Tree, other : Tree) : Tree =
       Apply(
          Select(extractRun(tree).get, TermName("flatMap")),
          List(Function(List(ValDef(Modifiers(Flag.PARAM), TermName("x$1"), TypeTree(), EmptyTree)), other))
       )
-   }
 
    def isRun(tree : Tree) : Boolean =
       extractRun(tree).isDefined
 
-   def hasRun(tree : Tree) : Boolean = {
-
+   def hasRun(tree : Tree) : Boolean =
       tree match {
          case t if extractRun(t).isDefined ⇒ true
          case ValDef(_, _, _, t)           ⇒ hasRun(t)
          case Block(ts, t)                 ⇒ hasRun(t) || ts.map(hasRun).foldRight(false)((a, b) ⇒ a || b)
          case _                            ⇒ false
       }
-   }
 
-   def extractRun(tree : Tree) : Option[Tree] = {
+   def extractRun(tree : Tree) : Option[Tree] =
       tree match {
          case Apply(Ident(TermName("run")), List(t)) ⇒ Some(t)
          case Apply(
@@ -127,7 +178,6 @@ private abstract class EffectImplementation {
             List(t)) ⇒ Some(t)
          case _ ⇒ None
       }
-   }
 
 }
 
@@ -156,4 +206,36 @@ private abstract class EffectImplementation {
          List(TypeTree())),
        List(Function(List(ValDef(Modifiers(PARAM), TermName("x$1"), TypeTree(), EmptyTree)), Literal(Constant(6)))))),
    Apply(Select(Ident(TermName("foo")), TermName("$plus")), List(Ident(TermName("baz")))))
+
+Function(
+	List(
+		ValDef(
+			Modifiers(PARAM),
+			TermName("x"),
+			TypeTree().setOriginal(Select(Ident(scala), scala.Int)),
+			EmptyTree
+		)
+	),
+	Apply(
+		TypeApply(
+			Select(
+				Select(
+					Ident(scala),
+					scala.Tuple2
+				),
+				TermName("apply")
+			),
+			List(
+				TypeTree(),
+				TypeTree()
+			)
+		),
+		List(
+			Ident(
+				TermName("x")
+			),
+			Literal(Constant(5))
+		)
+	)
+)
  */
